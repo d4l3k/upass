@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"errors"
 	"io/ioutil"
 	"log"
@@ -105,32 +103,6 @@ func (u User) Activate() error {
 		return errors.New("Invalid username or password details.")
 	}
 
-	return nil
-}
-
-func (u *User) Encrypt(key *rsa.PrivateKey) error {
-	if u.Encrypted {
-		return nil
-	}
-	encrypted, err := rsa.EncryptPKCS1v15(rand.Reader, &key.PublicKey, []byte(u.Password))
-	if err != nil {
-		return err
-	}
-	u.Password = string(encrypted)
-	u.Encrypted = true
-	return nil
-}
-
-func (u *User) Decrypt(key *rsa.PrivateKey) error {
-	if !u.Encrypted {
-		return nil
-	}
-	decrypted, err := rsa.DecryptPKCS1v15(rand.Reader, key, []byte(u.Password))
-	if err != nil {
-		return err
-	}
-	u.Password = string(decrypted)
-	u.Encrypted = false
 	return nil
 }
 
