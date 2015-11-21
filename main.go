@@ -1,13 +1,15 @@
 package main
 
 import (
+	"crypto/rsa"
 	"errors"
+	"flag"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jinzhu/gorm"
@@ -17,6 +19,7 @@ import (
 
 type User struct {
 	Username, Password, University string
+	LastActivated                  time.Time
 	Encrypted                      bool
 }
 
@@ -33,7 +36,7 @@ func (u User) Validate() error {
 	return nil
 }
 
-func (u User) Activate() error {
+func (u *User) Activate() error {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return err
@@ -46,7 +49,7 @@ func (u User) Activate() error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+	//body, _ := ioutil.ReadAll(resp.Body)
 	//log.Println(string(body))
 
 	// Log into shibboleth
@@ -97,16 +100,82 @@ func (u User) Activate() error {
 		return err
 	}
 	defer resp4.Body.Close()
-	body, _ = ioutil.ReadAll(resp4.Body)
-	log.Println(string(body))
-	if !strings.Contains(string(body), "To request your U-Pass BC select the month and click") {
+
+	doc3, err := goquery.NewDocumentFromResponse(resp4)
+	if err != nil {
+		return err
+	}
+	if doc3.Find("#form-request").Length() == 0 {
 		return errors.New("Invalid username or password details.")
 	}
+
+	action = "https://upassbc.translink.ca" + doc3.Find("#form-request").AttrOr("action", "")
+	vals := url.Values{"requestButton": {"Request"}}
+	checkboxes := doc3.Find("#form-request input:nth-child(1)[type=\"checkbox\"]")
+	log.Printf("Activating UPass %s, count %d", u.Username, checkboxes.Length())
+	if checkboxes.Length() == 0 {
+		return nil
+	}
+	doc3.Find("#form-request input").Each(func(i int, sel *goquery.Selection) {
+		name := sel.AttrOr("name", "")
+		val := sel.AttrOr("value", "")
+		if len(name) == 0 || len(val) == 0 {
+			return
+		}
+		vals[name] = append(vals[name], val)
+	})
+	boxName := checkboxes.Last().AttrOr("name", "")
+	vals[boxName] = append(vals[boxName], "true")
+
+	log.Println("vals", vals)
+	resp5, err := c.PostForm(action, vals)
+	if err != nil {
+		return err
+	}
+	defer resp5.Body.Close()
+	body, _ := ioutil.ReadAll(resp5.Body)
+	log.Println(string(body))
+
+	u.LastActivated = time.Now()
 
 	return nil
 }
 
+func activateEverything(db gorm.DB, key *rsa.PrivateKey) {
+	log.Println("Checking for new UPasses...")
+	var users []*User
+	db.Find(&users)
+	for i, user := range users {
+		if err := user.Decrypt(key); err != nil {
+			log.Printf("ERR decrypting %s, %s", user.Username, err)
+			continue
+		}
+		if err := user.Activate(); err != nil {
+			log.Printf("ERR activating %s, %s", user.Username, err)
+			continue
+		}
+		if err := user.Decrypt(key); err != nil {
+			log.Printf("ERR decrypting %s, %s", user.Username, err)
+			continue
+		}
+		db.Model(user).Update("last_activated", user.LastActivated)
+		// Remove decrypted version from memory.
+		users[i] = nil
+	}
+}
+
+func pollActivator(db gorm.DB, key *rsa.PrivateKey) {
+	ticker := time.NewTicker(24 * time.Hour)
+	for _ = range ticker.C {
+		activateEverything(db, key)
+	}
+}
+
+var addr = flag.String("addr", ":3000", "The address to listen on.")
+
 func main() {
+	flag.Parse()
+
 	db, err := gorm.Open("sqlite3", "./user.db")
 	if err != nil {
 		log.Fatal(err)
@@ -118,6 +187,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	go pollActivator(db, key)
+	go activateEverything(db, key)
 
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 	http.HandleFunc("/api/v1/register", func(w http.ResponseWriter, r *http.Request) {
@@ -138,13 +210,16 @@ func main() {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		user.Encrypt(key)
+		if err := user.Encrypt(key); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
 		if err := db.Create(user).Error; err != nil {
-			http.Error(w, err.Error(), 400)
+			http.Error(w, err.Error(), 500)
 			return
 		}
 		w.Write([]byte("Successfully created renewer."))
 	})
-	log.Println("Listening on :3000")
-	log.Fatal(http.ListenAndServe(":3000", nil))
+	log.Printf("Listening on %s", *addr)
+	log.Fatal(http.ListenAndServe(*addr, nil))
 }
