@@ -5,7 +5,7 @@ A service for doing UPass activations automatically.
 
 ## Running on Docker (port 8080)
 ```bash
-docker run -v /tmp/foo:/data -p 8080:3000 -d --restart=always upass app -dir="/data"
+docker run -v /tmp/foo:/data -p 8080:3000 -d --restart=always d4l3k/upass app -dir="/data"
 ```
 
 ## Running
