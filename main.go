@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"path"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -172,11 +173,12 @@ func pollActivator(db *gorm.DB, key *rsa.PrivateKey) {
 }
 
 var addr = flag.String("addr", ":3000", "The address to listen on.")
+var dir = flag.String("dir", ".", "the directory to put data in")
 
 func main() {
 	flag.Parse()
 
-	db, err := gorm.Open("sqlite3", "./user.db")
+	db, err := gorm.Open("sqlite3", path.Join(*dir, "user.db"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -201,7 +203,7 @@ func main() {
 			http.Error(w, "password must not be empty", 400)
 			return
 		}
-		key, err = readKeyOrGenerate("./db.key", password)
+		key, err = readKeyOrGenerate(path.Join(*dir, "db.key"), password)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 		}
