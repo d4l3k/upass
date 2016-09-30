@@ -141,7 +141,7 @@ func (u *User) Activate() error {
 	return nil
 }
 
-func activateEverything(db gorm.DB, key *rsa.PrivateKey) {
+func activateEverything(db *gorm.DB, key *rsa.PrivateKey) {
 	log.Println("Checking for new UPasses...")
 	var users []*User
 	db.Find(&users)
@@ -164,7 +164,7 @@ func activateEverything(db gorm.DB, key *rsa.PrivateKey) {
 	}
 }
 
-func pollActivator(db gorm.DB, key *rsa.PrivateKey) {
+func pollActivator(db *gorm.DB, key *rsa.PrivateKey) {
 	ticker := time.NewTicker(24 * time.Hour)
 	for _ = range ticker.C {
 		activateEverything(db, key)
@@ -183,16 +183,38 @@ func main() {
 	db.CreateTable(&User{})
 	db.AutoMigrate(&User{})
 
-	key, err := readKeyOrGenerate("./db.key")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	go pollActivator(db, key)
-	go activateEverything(db, key)
+	var key *rsa.PrivateKey
 
 	http.Handle("/", http.FileServer(http.Dir("./static")))
+
+	http.HandleFunc("/api/v1/key", func(w http.ResponseWriter, r *http.Request) {
+		if key != nil {
+			http.Error(w, "key already decrypted", 400)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		password := r.FormValue("password")
+		if len(password) == 0 {
+			http.Error(w, "password must not be empty", 400)
+			return
+		}
+		key, err = readKeyOrGenerate("./db.key", password)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+		}
+		w.Write([]byte("Successfully setup keys."))
+
+		go pollActivator(db, key)
+		go activateEverything(db, key)
+	})
 	http.HandleFunc("/api/v1/register", func(w http.ResponseWriter, r *http.Request) {
+		if key == nil {
+			http.Error(w, "key needs to be generated or decrypted", 500)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), 400)
 			return

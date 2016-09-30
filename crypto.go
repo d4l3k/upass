@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-
-	"github.com/howeyc/gopass"
 )
 
 const (
@@ -18,7 +16,7 @@ const (
 	rsaBitLength = 4096
 )
 
-func readKeyOrGenerate(path string) (*rsa.PrivateKey, error) {
+func readKeyOrGenerate(path, pass string) (*rsa.PrivateKey, error) {
 	file, err := ioutil.ReadFile(path)
 	var key *rsa.PrivateKey
 	if err != nil {
@@ -28,9 +26,7 @@ func readKeyOrGenerate(path string) (*rsa.PrivateKey, error) {
 			return nil, err
 		}
 		raw := x509.MarshalPKCS1PrivateKey(key)
-		fmt.Printf("Key Password: ")
-		pass := gopass.GetPasswd()
-		block, err := x509.EncryptPEMBlock(rand.Reader, blockType, raw, pass, cipherType)
+		block, err := x509.EncryptPEMBlock(rand.Reader, blockType, raw, []byte(pass), cipherType)
 		if err != nil {
 			return nil, err
 		}
@@ -42,9 +38,7 @@ func readKeyOrGenerate(path string) (*rsa.PrivateKey, error) {
 		if block == nil {
 			return nil, fmt.Errorf("%s doesn't contain a PEM key", path)
 		}
-		fmt.Printf("Key Password: ")
-		pass := gopass.GetPasswd()
-		raw, err := x509.DecryptPEMBlock(block, pass)
+		raw, err := x509.DecryptPEMBlock(block, []byte(pass))
 		if err != nil {
 			return nil, err
 		}
